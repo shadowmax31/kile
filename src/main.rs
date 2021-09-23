@@ -10,6 +10,7 @@ use wayland_client::protocol::{wl_output, wl_output::WlOutput};
 use wayland_client::{Display, GlobalManager, Main};
 
 fn main() {
+    let mut layout = None;
     let mut args = env::args();
     let mut namespace = String::from("kile");
     args.next();
@@ -21,9 +22,15 @@ fn main() {
                         namespace = name;
                     }
                 }
+                "--layout" | "--l" | "-l" => {
+                    if let Some(exp) = args.next() {
+                        layout = Some(lexer::parse(&exp));
+                    }
+                }
                 "--help" | "-h" | "--h" => {
                     print!("Usage: kile [option]\n\n");
-                    print!("  -n, --n, --namespace <string> : the namespace of kile.\n");
+                    print!("  -l | --l | --layout <string>		the default layout.\n");
+                    print!("  -n | --n | --namespace <string> 	the namespace of kile.\n");
                     std::process::exit(0);
                 }
                 _ => break,
@@ -32,7 +39,7 @@ fn main() {
         }
     }
 
-    let mut globals = Globals::new(namespace);
+    let mut globals = Globals::new(namespace, layout);
     let display = Display::connect_to_env().unwrap();
     let mut event_queue = display.create_event_queue();
     let attached_display = (*display).clone().attach(event_queue.token());
@@ -58,6 +65,7 @@ fn main() {
                                 output.layout_filter(
                                     globals.layout_manager.as_ref(),
                                     globals.namespace.clone(),
+                                    globals.default.clone()
                                 );
                             }
                         }

@@ -9,6 +9,7 @@ use wayland_client::Main;
 
 pub struct Globals {
     pub namespace: String,
+    pub default: Option<Layout>,
     pub layout_manager: Option<Main<RiverLayoutManagerV3>>,
 }
 
@@ -62,10 +63,11 @@ pub struct Area {
 }
 
 impl Globals {
-    pub fn new(namespace: String) -> Globals {
+    pub fn new(namespace: String, default: Option<Layout>) -> Globals {
         {
             Globals {
                 namespace,
+                default,
                 layout_manager: None,
             }
         }
@@ -98,6 +100,7 @@ impl Output {
         mut self,
         layout_manager: Option<&Main<RiverLayoutManagerV3>>,
         namespace: String,
+        layout: Option<Layout>,
     ) {
         // A generic default configuration used when a Tag isn't defined
         let mut default: Tag = {
@@ -110,7 +113,7 @@ impl Output {
                         ratio: 0.6,
                     }
                 },
-                layout: Layout::Full,
+                layout: layout.unwrap_or(Layout::Full),
             }
         };
         let layout = layout_manager
@@ -402,7 +405,7 @@ impl Output {
                                 Err(_) => {}
                             },
                         },
-                        _ => lexer::main(&mut self, command, value),
+                        _ => lexer::main(&mut self, value),
                     }
                 }
             }

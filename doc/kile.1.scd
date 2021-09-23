@@ -22,11 +22,14 @@ that implements *river-layout-v3*.
 *-n*, *--n*, *--namespace*
 	The namespace of this layout generator.
 
+*-l*, *--l*, *--layout*
+	The default layout.
+
 # CONFIGURATION
 
 On launch, the default layout is *Full*.
 
-To configure kile you need to modify or set theses layout values using *riverctl*.
+To configure kile you need to use *riverctl(1)*.
 
 ## COMMANDS
 
@@ -68,16 +71,16 @@ To configure kile you need to modify or set theses layout values using *riverctl
 *order* _ascend/descend_
 	The order in which the tags are sorted. If it's *descend*ing, the highest tag will have priority when multiple are focused and vice versa.
 
-*default*, *focused*, *all* or *1..32* _(string)_ _(layout)_
+*default*, *focused*, *all* or *1..32* _(name)_ _(layout)_
 	The configuration of a tag. _0..32_ means all values between 1 and 32 inclusively.
 	*focused* will set the _layout_ of the focused tag, *all*, all tags and for numbers
 	between *1 and 32*.
 
-	_string_ the name of the layout, seperated from the layout by a new line. This will be useful once river-toplevel-v1 is implementated. 
+	_name_ the name of the layout, seperated from the layout by a new line. This will be useful once river-toplevel-v1 is implemented. 
 	_layout_ the layout definition of the corresponding tag. See *LAYOUTS*.
 
 *clear* _(tag)_
-	Clear the configuration of the given tag(s)
+	Clear the configuration of the given tag
 
 	Possible values *all*, *default*, *focused* and an _uint_ between *1 and 32* inclusively.
 
