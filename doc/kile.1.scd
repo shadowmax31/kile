@@ -43,10 +43,10 @@ To configure kile you need to use *riverctl(1)*.
 *(default_)(mod_)main_index* _(int)_
 	An arbitrary positive integer indicating the index of the main area in a layout.
 
-*(mod_)view_padding* _(int)_
+*(global_)(mod_)view_padding* _(int)_
 	The padding in pixels of the each view within the layout.
 
-*(mod_)outer_padding* _(int)_
+*(global_)(mod_)outer_padding* _(int)_
 	The padding in pixels between the layout and the edges of the output.
 
 *xoffset* _(int)_

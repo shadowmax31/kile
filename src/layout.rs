@@ -177,7 +177,9 @@ impl Area {
                         parameters,
                         if frame_amount == 0 {
                             view_amount
-                        } else { parameters.amount },
+                        } else {
+                            parameters.amount
+                        },
                         false,
                     );
                     view_amount -= parameters.amount;

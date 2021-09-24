@@ -10,8 +10,8 @@ use wayland_client::protocol::{wl_output, wl_output::WlOutput};
 use wayland_client::{Display, GlobalManager, Main};
 
 fn main() {
-    let mut layout = None;
     let mut args = env::args();
+    let mut layout = layout::Layout::Full;
     let mut namespace = String::from("kile");
     args.next();
     loop {
@@ -24,7 +24,7 @@ fn main() {
                 }
                 "--layout" | "--l" | "-l" => {
                     if let Some(exp) = args.next() {
-                        layout = Some(lexer::parse(&exp));
+                        layout = lexer::parse(&exp);
                     }
                 }
                 "--help" | "-h" | "--h" => {
@@ -65,7 +65,6 @@ fn main() {
                                 output.layout_filter(
                                     globals.layout_manager.as_ref(),
                                     globals.namespace.clone(),
-                                    globals.default.clone()
                                 );
                             }
                         }

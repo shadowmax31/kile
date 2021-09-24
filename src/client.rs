@@ -9,7 +9,9 @@ use wayland_client::Main;
 
 pub struct Globals {
     pub namespace: String,
-    pub default: Option<Layout>,
+    pub default: Tag,
+    pub view_padding: i32,
+    pub outer_padding: i32,
     pub layout_manager: Option<Main<RiverLayoutManagerV3>>,
 }
 
@@ -63,11 +65,21 @@ pub struct Area {
 }
 
 impl Globals {
-    pub fn new(namespace: String, default: Option<Layout>) -> Globals {
+    pub fn new(namespace: String, layout: Layout) -> Globals {
         {
             Globals {
                 namespace,
-                default,
+                default: Tag {
+                    layout,
+                    parameters: Parameters {
+                        index: 0,
+                        amount: 1,
+                        ratio: 0.55,
+                    },
+                    name: "kile".to_owned(),
+                },
+                view_padding: 0,
+                outer_padding: 0,
                 layout_manager: None,
             }
         }
@@ -100,29 +112,14 @@ impl Output {
         mut self,
         layout_manager: Option<&Main<RiverLayoutManagerV3>>,
         namespace: String,
-        layout: Option<Layout>,
     ) {
-        // A generic default configuration used when a Tag isn't defined
-        let mut default: Tag = {
-            Tag {
-                name: "kile".to_owned(),
-                parameters: {
-                    Parameters {
-                        index: 0,
-                        amount: 1,
-                        ratio: 0.6,
-                    }
-                },
-                layout: layout.unwrap_or(Layout::Full),
-            }
-        };
         let layout = layout_manager
             .expect("Compositor doesn't implement river_layout_v3")
             .get_layout(&self.output, namespace.clone());
         let mut view_padding = 0;
         // A vector holding the geometry of all the views from the most recent layout demand
         let mut views: Vec<Area> = Vec::new();
-        layout.quick_assign(move |layout, event, _| match event {
+        layout.quick_assign(move |layout, event, mut globals| match event {
             Event::LayoutDemand {
                 view_count,
                 usable_width,
@@ -152,8 +149,14 @@ impl Output {
                             tag.name.as_str()
                         }
                         None => {
-                            default.update(&mut views, view_count, self.dimension);
-                            default.name.as_str()
+                            let globals = globals.get::<Globals>().unwrap();
+                            view_padding = globals.view_padding;
+                            self.dimension
+                                .apply_padding(globals.outer_padding - self.outer_padding);
+                            globals
+                                .default
+                                .update(&mut views, view_count, self.dimension);
+                            globals.default.name.as_str()
                         }
                     }
                 } else {
@@ -182,6 +185,25 @@ impl Output {
             Event::UserCommand { command } => {
                 if let Some((command, value)) = command.split_once(' ') {
                     match command {
+                        "global_padding" => {
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(value) = value.parse::<i32>() {
+                                    globals.outer_padding = value;
+                                    globals.view_padding = value;
+                                }
+                            }
+                        }
+                        "mod_global_padding" => {
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(delta) = value.parse::<i32>() {
+                                    globals.outer_padding += delta;
+                                    if (globals.view_padding as i32) + delta >= 0 {
+                                        globals.view_padding += delta;
+                                        view_padding = delta;
+                                    }
+                                }
+                            }
+                        }
                         "padding" => {
                             if let Ok(value) = value.parse::<i32>() {
                                 self.outer_padding = value;
@@ -198,9 +220,23 @@ impl Output {
                                 }
                             }
                         }
+                        "global_outer_padding" => {
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(value) = value.parse::<i32>() {
+                                    globals.outer_padding = value;
+                                }
+                            }
+                        }
                         "outer_padding" => {
                             if let Ok(value) = value.parse::<i32>() {
                                 self.outer_padding = value;
+                            }
+                        }
+                        "global_view_padding" => {
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(value) = value.parse::<i32>() {
+                                    globals.view_padding = value;
+                                }
                             }
                         }
                         "view_padding" => {
@@ -212,9 +248,23 @@ impl Output {
                                 }
                             }
                         }
+                        "mod_global_outer_padding" => {
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(delta) = value.parse::<i32>() {
+                                    globals.outer_padding += delta;
+                                }
+                            }
+                        }
                         "mod_outer_padding" => {
                             if let Ok(delta) = value.parse::<i32>() {
                                 self.outer_padding += delta;
+                            }
+                        }
+                        "mod_global_view_padding" => {
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(delta) = value.parse::<i32>() {
+                                    globals.view_padding += delta;
+                                }
                             }
                         }
                         "mod_view_padding" => {
@@ -245,14 +295,18 @@ impl Output {
                             }
                         }
                         "default_main_ratio" => {
-                            if let Ok(value) = value.parse::<f64>() {
-                                default.parameters.ratio = value.clamp(0.0, 1.0);
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(value) = value.parse::<f64>() {
+                                    globals.default.parameters.ratio = value.clamp(0.0, 1.0);
+                                }
                             }
                         }
                         "mod_default__main_ratio" => {
-                            if let Ok(delta) = value.parse::<f64>() {
-                                if delta <= default.parameters.ratio {
-                                    default.parameters.ratio += delta;
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(delta) = value.parse::<f64>() {
+                                    if delta <= globals.default.parameters.ratio {
+                                        globals.default.parameters.ratio += delta;
+                                    }
                                 }
                             }
                         }
@@ -274,15 +328,20 @@ impl Output {
                             }
                         }
                         "default_main_amount" => {
-                            if let Ok(value) = value.parse::<u32>() {
-                                default.parameters.amount = value;
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(value) = value.parse::<u32>() {
+                                    globals.default.parameters.amount = value;
+                                }
                             }
                         }
                         "mod_default_main_amount" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                if (default.parameters.amount as i32) + delta >= 0 {
-                                    default.parameters.amount =
-                                        ((default.parameters.amount as i32) + delta) as u32
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(delta) = value.parse::<i32>() {
+                                    if (globals.default.parameters.amount as i32) + delta >= 0 {
+                                        globals.default.parameters.amount =
+                                            ((globals.default.parameters.amount as i32) + delta)
+                                                as u32
+                                    }
                                 }
                             }
                         }
@@ -304,15 +363,20 @@ impl Output {
                             }
                         }
                         "default_main_index" => {
-                            if let Ok(value) = value.parse::<u32>() {
-                                default.parameters.index = value;
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(value) = value.parse::<u32>() {
+                                    globals.default.parameters.index = value;
+                                }
                             }
                         }
                         "mod_default_main_index" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                if (default.parameters.index as i32) + delta >= 0 {
-                                    default.parameters.index =
-                                        ((default.parameters.index as i32) + delta) as u32
+                            if let Some(globals) = globals.get::<Globals>() {
+                                if let Ok(delta) = value.parse::<i32>() {
+                                    if (globals.default.parameters.index as i32) + delta >= 0 {
+                                        globals.default.parameters.index =
+                                            ((globals.default.parameters.index as i32) + delta)
+                                                as u32
+                                    }
                                 }
                             }
                         }
@@ -382,19 +446,25 @@ impl Output {
                             _ => {}
                         },
                         "default" => {
-                            let (name, layout) = if let Some(data) = value.split_once('\n') {
-                                data
-                            } else if let Some(data) = lexer::split_ounce(value, ' ') {
-                                data
-                            } else {
-                                ("kile", value)
-                            };
-                            default.name = name.to_owned();
-                            default.layout = lexer::parse(layout);
+                            if let Some(globals) = globals.get::<Globals>() {
+                                let (name, layout) = if let Some(data) = value.split_once('\n') {
+                                    data
+                                } else if let Some(data) = lexer::split_ounce(value, ' ') {
+                                    data
+                                } else {
+                                    ("kile", value)
+                                };
+                                globals.default.name = name.to_owned();
+                                globals.default.layout = lexer::parse(layout);
+                            }
                         }
                         "clear" => match value {
                             "all" => self.tags = Default::default(),
-                            "default" => default.layout = Layout::Full,
+                            "default" => {
+                                if let Some(globals) = globals.get::<Globals>() {
+                                    globals.default.layout = Layout::Full;
+                                }
+                            }
                             "focused" => self.tags[self.focused] = None,
                             _ => match value.parse::<usize>() {
                                 Ok(int) => {
