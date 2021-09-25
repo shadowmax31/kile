@@ -4,7 +4,7 @@ use crate::client::*;
 use crate::layout::*;
 pub use lexer::*;
 
-pub fn main<'s>(output_handle: &mut Output, value: &'s str) {
+pub fn main<'s>(output_handle: &mut Output, scope: &'s str, value: &'s str) {
     let (name, layout) = if let Some(data) = value.split_once('\n') {
         data
     } else if let Some(data) = lexer::split_ounce(value, ' ') {
@@ -12,7 +12,7 @@ pub fn main<'s>(output_handle: &mut Output, value: &'s str) {
     } else {
         ("kile", value)
     };
-    let tags: Result<std::ops::Range<usize>, ()> = match name.as_ref() {
+    let tags: Result<std::ops::Range<usize>, ()> = match scope {
         "focused" => Ok(output_handle.focused..output_handle.focused + 1),
         "all" => Ok(0..32),
         _ => match name.parse::<usize>() {

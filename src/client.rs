@@ -475,7 +475,11 @@ impl Output {
                                 Err(_) => {}
                             },
                         },
-                        _ => lexer::main(&mut self, value),
+                        _ => {
+                            if let Some((scope, layout)) = value.split_once(' ') {
+                                lexer::main(&mut self, scope, layout);
+                            }
+                        }
                     }
                 }
             }
