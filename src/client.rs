@@ -188,8 +188,10 @@ impl Output {
                         "global_padding" => {
                             if let Some(globals) = globals.get::<Globals>() {
                                 if let Ok(value) = value.parse::<i32>() {
-                                    globals.outer_padding = value;
-                                    globals.view_padding = value;
+                                    if value > 0 {
+                                        globals.outer_padding = value;
+                                        globals.view_padding = value;
+                                    }
                                 }
                             }
                         }
@@ -213,7 +215,9 @@ impl Output {
                         }
                         "mod_padding" => {
                             if let Ok(delta) = value.parse::<i32>() {
-                                self.outer_padding += delta;
+                                if (self.outer_padding as i32) + delta >= 0 {
+                                    self.outer_padding += delta;
+                                }
                                 if (self.view_padding as i32) + delta >= 0 {
                                     self.view_padding += delta;
                                     view_padding = delta;

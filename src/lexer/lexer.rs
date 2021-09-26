@@ -59,8 +59,9 @@ pub fn parse<'s>(name: &str) -> Layout {
         "v" | "ver" | "vertical" => Layout::Vertical,
         "h" | "hor" | "horizontal" => Layout::Horizontal,
         _ => {
+            let mut value = None;
+            let mut layout = None;
             let mut condition = None;
-            let (mut value, mut layout) = (None, None);
             if let Some(exp) = clamp(name) {
                 if let Some((outer, inner)) = split_ounce(exp, ':') {
                     Layout::Recursive {
