@@ -15,7 +15,7 @@ pub fn main<'s>(output_handle: &mut Output, scope: &'s str, value: &'s str) {
     let tags: Result<std::ops::Range<usize>, ()> = match scope {
         "focused" => Ok(output_handle.focused..output_handle.focused + 1),
         "all" => Ok(0..32),
-        _ => match name.parse::<usize>() {
+        _ => match scope.parse::<usize>() {
             Ok(int) => Ok(int - 1..int),
             Err(e) => {
                 eprintln!("{} : {}", e, name);
