@@ -150,7 +150,12 @@ pub fn parse<'s>(name: &str) -> Layout {
                             },
                         }
                     } else {
-                        Layout::Full
+                        Layout::Parameters {
+                            layout: Box::new(parse(exp)),
+                            amount: None,
+                            ratio: None,
+                            index: None
+                        }
                     }
                 }
             } else {
