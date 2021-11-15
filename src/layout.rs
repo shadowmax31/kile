@@ -209,7 +209,7 @@ impl Area {
                         amount: amount.unwrap_or(parameters.amount),
                     }
                 };
-                area.generate(views, &*layout, &parameters, view_amount, true);
+                area.generate(views, layout, &parameters, view_amount, true);
             }
             Layout::Conditional {
                 a,
@@ -225,9 +225,9 @@ impl Area {
                         index: parameters.index,
                     },
                 ) {
-                    area.generate(views, &*a, &parameters, view_amount, ratio);
+                    area.generate(views, a, &parameters, view_amount, ratio);
                 } else {
-                    area.generate(views, &*b, &parameters, view_amount, ratio);
+                    area.generate(views, b, &parameters, view_amount, ratio);
                 }
             }
         }

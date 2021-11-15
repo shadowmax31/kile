@@ -23,7 +23,7 @@ pub struct Parameters {
     pub ratio: f64,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Order {
     Ascend,
     Descend,
@@ -181,7 +181,6 @@ impl Output {
                 println!("Namespace already in use.");
                 layout.destroy();
             }
-            // All String events are delegated to the lexer
             Event::UserCommand { command } => {
                 if let Some((command, value)) = command.split_once(' ') {
                     match command {
@@ -501,7 +500,7 @@ fn tag(tagmask: u32, order: &Order) -> u32 {
         current = 1 << int;
         current < tagmask
     } {
-        if current != tagmask && (tagmask / current) % 2 != 0 {
+        if tagmask & current == current {
             if let Order::Descend = order {
                 int = tag(tagmask - current, order);
             }

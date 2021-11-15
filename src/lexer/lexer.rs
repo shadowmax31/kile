@@ -26,6 +26,7 @@ fn clamp<'s>(exp: &'s str) -> Option<&'s str> {
     }
     None
 }
+
 // Iterates over all expressions delimited by a character
 // and excutes a function on each one of them
 fn filter<'s>(exp: &'s str, pattern: char, mut f: impl FnMut(&'s str) -> Result<(), String>) {
