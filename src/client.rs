@@ -181,6 +181,7 @@ impl Output {
                 println!("Namespace already in use.");
                 layout.destroy();
             }
+            Event::UserCommandTags { tags: _ } => {}
             Event::UserCommand { command } => {
                 if let Some((command, value)) = command.split_once(' ') {
                     match command {
