@@ -1,513 +1,280 @@
-use super::layout::Layout;
-use super::lexer;
-use crate::wayland::{
-    river_layout_v3::river_layout_manager_v3::RiverLayoutManagerV3,
-    river_layout_v3::river_layout_v3::Event,
+use std::{collections::HashMap, path::PathBuf};
+
+use kilexpr::{
+    parser::{Layout, Parameters},
+    LayoutGenerator, Rect,
 };
-use wayland_client::protocol::wl_output::WlOutput;
-use wayland_client::Main;
+use wayland_client::{
+    backend::ObjectId,
+    protocol::{
+        wl_output::{self, WlOutput},
+        wl_registry::{self, WlRegistry},
+    },
+    Dispatch, Proxy,
+};
 
-pub struct Globals {
-    pub namespace: String,
-    pub default: Tag,
-    pub view_padding: i32,
-    pub outer_padding: i32,
-    pub layout_manager: Option<Main<RiverLayoutManagerV3>>,
+use crate::protocol::{
+    river_layout_manager_v3::RiverLayoutManagerV3,
+    river_layout_v3::{self, RiverLayoutV3},
+};
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct OutputId(ObjectId);
+
+impl OutputId {
+    pub fn new(output: &WlOutput) -> OutputId {
+        OutputId(output.id())
+    }
 }
 
-// Parameters necessary to generate a layout
-#[derive(Copy, Clone)]
-pub struct Parameters {
-    pub amount: u32,
-    pub index: u32,
-    pub ratio: f64,
+pub struct LayoutManager {
+    /// Command Tags.
+    tags: u32,
+    /// Path of the layout file.
+    path: PathBuf,
+    /// The list of layouts.
+    layouts: HashMap<String, Layout>,
+    /// The output configuration.
+    outputs: HashMap<OutputId, Output>,
+    /// The river_layout_manager_v3 global
+    proxy: Option<RiverLayoutManagerV3>,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum Order {
-    Ascend,
-    Descend,
+impl Default for LayoutManager {
+    fn default() -> Self {
+        let mut home = std::env::var("HOME").expect("Failed to found the HOME path!");
+        home.push_str("/.config/river/layout.kl");
+        Self::new(home)
+    }
 }
 
-// The state of an Output
+impl LayoutManager {
+    pub fn new(path: String) -> Self {
+        let mut this = Self {
+            tags: u32::MAX,
+            path: PathBuf::from(path),
+            layouts: HashMap::new(),
+            outputs: HashMap::new(),
+            proxy: None,
+        };
+        this.load_layouts();
+        this
+    }
+    pub fn load_layouts(&mut self) {
+        match std::fs::read_to_string(self.path.as_path()) {
+            Ok(s) => match kilexpr::parse(&s) {
+                Ok(parser) => self.layouts = parser.vars,
+                Err(err) => eprintln!("{:?}: {:?}", err.kind.cursor(&s), err),
+            },
+            Err(err) => println!("{:?}", err),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Output {
-    pub output: Main<WlOutput>,
-    // This is the index of the focused Tag
-    pub focused: usize,
-    // Defines if a layout should regenerated or not
-    pub reload: bool,
-    // Defines if a the layout area should reajusted to the output dimension or not
-    pub resize: bool,
-    // Order the tags are sorted
-    pub order: Order,
-    // Dimensions of the layout area
-    pub dimension: Area,
-    pub view_padding: i32,
-    pub outer_padding: i32,
-    pub smart_padding: bool,
-    // The configuration of all Tags
-    pub tags: [Option<Tag>; 32],
+    tags: [Tag; 32],
 }
 
-// The configuration of a Tag
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
-    pub name: String,
-    pub layout: Layout,
-    pub parameters: Parameters,
+    layout: String,
+    padding: i32,
+    params: Parameters,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Area {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-}
-
-impl Globals {
-    pub fn new(namespace: String, layout: Layout) -> Globals {
-        {
-            Globals {
-                namespace,
-                default: Tag {
-                    layout,
-                    parameters: Parameters {
-                        index: 0,
-                        amount: 1,
-                        ratio: 0.55,
-                    },
-                    name: "kile".to_owned(),
-                },
-                view_padding: 0,
-                outer_padding: 0,
-                layout_manager: None,
-            }
+impl Default for Tag {
+    fn default() -> Self {
+        Tag {
+            layout: String::from("default"),
+            padding: 0,
+            params: Parameters::default(),
         }
     }
 }
 
-impl Output {
-    pub fn new(output: Main<WlOutput>) -> Output {
-        {
-            Output {
-                output,
-                dimension: Area {
-                    x: 0,
-                    y: 0,
-                    w: 0,
-                    h: 0,
-                },
-                focused: 0,
-                reload: true,
-                resize: false,
-                view_padding: 0,
-                outer_padding: 0,
-                smart_padding: false,
-                order: Order::Ascend,
-                tags: Default::default(),
-            }
-        }
+pub struct TagIter(u32);
+
+impl TagIter {
+    pub fn new(tags: u32) -> Self {
+        Self(tags)
     }
-    pub fn layout_filter(
-        mut self,
-        layout_manager: Option<&Main<RiverLayoutManagerV3>>,
-        namespace: String,
+}
+
+impl Iterator for TagIter {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.gt(&0).then_some(self.0.trailing_zeros()).map(|tag| {
+            self.0 = self.0 ^ 1 << tag;
+            tag as usize
+        })
+    }
+}
+
+impl Dispatch<WlRegistry, ()> for LayoutManager {
+    fn event(
+        state: &mut Self,
+        registry: &WlRegistry,
+        event: <WlRegistry as Proxy>::Event,
+        _: &(),
+        _: &wayland_client::Connection,
+        qh: &wayland_client::QueueHandle<Self>,
     ) {
-        let layout = layout_manager
-            .expect("Compositor doesn't implement river_layout_v3")
-            .get_layout(&self.output, namespace.clone());
-        let mut view_padding = 0;
-        // A vector holding the geometry of all the views from the most recent layout demand
-        let mut views: Vec<Area> = Vec::new();
-        layout.quick_assign(move |layout, event, mut globals| match event {
-            Event::LayoutDemand {
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
+                "wl_output" => {
+                    registry.bind::<wl_output::WlOutput, _, Self>(name, version, qh, ());
+                }
+                "river_layout_manager_v3" => {
+                    state.proxy =
+                        Some(registry.bind::<RiverLayoutManagerV3, _, Self>(name, version, qh, ()));
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlOutput, ()> for LayoutManager {
+    fn event(
+        state: &mut Self,
+        output: &WlOutput,
+        event: <WlOutput as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &wayland_client::Connection,
+        qhandle: &wayland_client::QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Done = event {
+            state
+                .outputs
+                .insert(OutputId::new(output), Output::default());
+            state
+                .proxy
+                .as_ref()
+                .expect("Compositor does not support river_layout_v3!")
+                .get_layout(output, String::from("kile"), qhandle, OutputId::new(output));
+        }
+    }
+}
+
+impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
+    fn event(
+        state: &mut Self,
+        proxy: &RiverLayoutV3,
+        event: <RiverLayoutV3 as Proxy>::Event,
+        output: &OutputId,
+        _: &wayland_client::Connection,
+        _: &wayland_client::QueueHandle<Self>,
+    ) {
+        match event {
+            river_layout_v3::Event::LayoutDemand {
                 view_count,
                 usable_width,
                 usable_height,
-                serial,
                 tags,
+                serial,
             } => {
-                let layout_name = if self.reload {
-                    if !self.resize {
-                        self.dimension = {
-                            Area {
-                                x: 0,
-                                y: 0,
-                                w: usable_width,
-                                h: usable_height,
-                            }
-                        };
-                        if !self.smart_padding || view_count > 1 {
-                            self.dimension.apply_padding(self.outer_padding);
-                        }
-                    }
-                    self.focused = tag(tags, &self.order) as usize;
-                    match self.tags[self.focused].as_ref() {
-                        Some(tag) => {
-                            view_padding = self.view_padding;
-                            tag.update(&mut views, view_count, self.dimension);
-                            tag.name.as_str()
-                        }
-                        None => {
-                            let globals = globals.get::<Globals>().unwrap();
-                            view_padding = globals.view_padding;
-                            self.dimension
-                                .apply_padding(globals.outer_padding - self.outer_padding);
-                            globals
-                                .default
-                                .update(&mut views, view_count, self.dimension);
-                            globals.default.name.as_str()
-                        }
-                    }
-                } else {
-                    "reload"
-                };
-                self.reload = true;
-                for area in &mut views {
-                    if !self.smart_padding || view_count > 1 {
-                        area.apply_padding(view_padding);
-                    }
-                    layout.push_view_dimensions(
-                        area.x as i32,
-                        area.y as i32,
-                        area.w,
-                        area.h,
-                        serial,
-                    )
+                state.tags = tags;
+                let rect = Rect::new(0, 0, usable_width, usable_height);
+                let tag = TagIter::new(tags)
+                    .filter_map(|tag| state.outputs.get(output).map(|output| &output.tags[tag]))
+                    .next();
+                if let Some(tag) = tag {
+                    let layout = state.layouts.get(&tag.layout).unwrap_or(&Layout::Full);
+                    LayoutGenerator::new(view_count, rect, layout, &state.layouts)
+                        .parameters(tag.params)
+                        .iter(|rect| {
+                            let Rect { x, y, w, h } = rect.pad(tag.padding);
+                            proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
+                        });
+                    proxy.commit(tag.layout.clone(), serial);
                 }
-                layout.commit(layout_name.to_owned(), serial);
             }
-            Event::NamespaceInUse => {
-                println!("Namespace already in use.");
-                layout.destroy();
+            river_layout_v3::Event::NamespaceInUse => {
+                eprintln!("Namespace in use!");
             }
-            Event::UserCommandTags { tags: _ } => {}
-            Event::UserCommand { command } => {
-                if let Some((command, value)) = command.split_once(' ') {
+            river_layout_v3::Event::UserCommand { command } => {
+                let output = state.outputs.get_mut(output).unwrap();
+                for (tag, (command, value)) in TagIter::new(state.tags).zip(command.split_once(' '))
+                {
+                    let tag = &mut output.tags[tag];
                     match command {
-                        "global_padding" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(value) = value.parse::<i32>() {
-                                    if value > 0 {
-                                        globals.outer_padding = value;
-                                        globals.view_padding = value;
-                                    }
-                                }
-                            }
+                        "padding" => tag.padding = value.parse().unwrap_or(tag.padding),
+                        "mod-padding" => tag.padding += value.parse::<i32>().unwrap_or_default(),
+                        "main-count" => tag.params.0 = value.parse().ok(),
+                        "mod-main-count" => {
+                            tag.params.0 = Some(
+                                (tag.params.0.unwrap_or_default() as i32)
+                                    .saturating_add(value.parse().ok().unwrap_or_default())
+                                    as u32,
+                            );
                         }
-                        "mod_global_padding" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    globals.outer_padding += delta;
-                                    if (globals.view_padding as i32) + delta >= 0 {
-                                        globals.view_padding += delta;
-                                        view_padding = delta;
-                                    }
-                                }
-                            }
+                        "main-index" => tag.params.1 = value.parse().ok(),
+                        "mod-main-index" => {
+                            tag.params.1 = Some(
+                                (tag.params.1.unwrap_or_default() as i32)
+                                    .saturating_add(value.parse().ok().unwrap_or_default())
+                                    as usize,
+                            );
                         }
-                        "padding" => {
-                            if let Ok(value) = value.parse::<i32>() {
-                                self.outer_padding = value;
-                                view_padding = value - view_padding;
-                                self.view_padding = value;
-                            }
+                        "main-ratio" => {
+                            tag.params.2 = value.parse::<f64>().ok().map(|f| f.clamp(0., 1.))
                         }
-                        "mod_padding" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                if (self.outer_padding as i32) + delta >= 0 {
-                                    self.outer_padding += delta;
-                                }
-                                if (self.view_padding as i32) + delta >= 0 {
-                                    self.view_padding += delta;
-                                    view_padding = delta;
-                                }
-                            }
+                        "mod-main-ratio" => {
+                            tag.params.2 = Some(
+                                tag.params.2.unwrap_or_default()
+                                    + value.parse::<f64>().ok().unwrap_or_default(),
+                            )
+                            .map(|f| f.clamp(0., 1.));
                         }
-                        "global_outer_padding" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(value) = value.parse::<i32>() {
-                                    globals.outer_padding = value;
-                                }
-                            }
+                        "layout" => {
+                            tag.layout.replace_range(.., value);
                         }
-                        "outer_padding" => {
-                            if let Ok(value) = value.parse::<i32>() {
-                                self.outer_padding = value;
-                            }
+                        "reload" => return state.load_layouts(),
+
+                        "path" => {
+                            state.path = value.into();
+                            return state.load_layouts();
                         }
-                        "global_view_padding" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(value) = value.parse::<i32>() {
-                                    globals.view_padding = value;
-                                }
-                            }
-                        }
-                        "view_padding" => {
-                            if let Ok(value) = value.parse::<i32>() {
-                                view_padding = value - view_padding;
-                                self.view_padding = value;
-                                if !views.is_empty() {
-                                    self.reload = false;
-                                }
-                            }
-                        }
-                        "mod_global_outer_padding" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    globals.outer_padding += delta;
-                                }
-                            }
-                        }
-                        "mod_outer_padding" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                self.outer_padding += delta;
-                            }
-                        }
-                        "mod_global_view_padding" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    globals.view_padding += delta;
-                                }
-                            }
-                        }
-                        "mod_view_padding" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                if (self.view_padding as i32) + delta >= 0 {
-                                    self.view_padding += delta;
-                                    view_padding = delta;
-                                    if !views.is_empty() {
-                                        self.reload = false;
-                                    }
-                                }
-                            }
-                        }
-                        "main_ratio" => {
-                            if let Some(tag) = self.tags[self.focused].as_mut() {
-                                if let Ok(value) = value.parse::<f64>() {
-                                    tag.parameters.ratio = value.clamp(0.0, 1.0);
-                                }
-                            }
-                        }
-                        "mod_main_ratio" => {
-                            if let Some(tag) = self.tags[self.focused].as_mut() {
-                                if let Ok(delta) = value.parse::<f64>() {
-                                    if delta <= tag.parameters.ratio {
-                                        tag.parameters.ratio += delta;
-                                    }
-                                }
-                            }
-                        }
-                        "default_main_ratio" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(value) = value.parse::<f64>() {
-                                    globals.default.parameters.ratio = value.clamp(0.0, 1.0);
-                                }
-                            }
-                        }
-                        "mod_default__main_ratio" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(delta) = value.parse::<f64>() {
-                                    if delta <= globals.default.parameters.ratio {
-                                        globals.default.parameters.ratio += delta;
-                                    }
-                                }
-                            }
-                        }
-                        "main_amount" => {
-                            if let Some(tag) = self.tags[self.focused].as_mut() {
-                                if let Ok(value) = value.parse::<u32>() {
-                                    tag.parameters.amount = value
-                                }
-                            }
-                        }
-                        "mod_main_amount" => {
-                            if let Some(tag) = self.tags[self.focused].as_mut() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    if (tag.parameters.amount as i32) + delta >= 0 {
-                                        tag.parameters.amount =
-                                            ((tag.parameters.amount as i32) + delta) as u32
-                                    }
-                                }
-                            }
-                        }
-                        "default_main_amount" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(value) = value.parse::<u32>() {
-                                    globals.default.parameters.amount = value;
-                                }
-                            }
-                        }
-                        "mod_default_main_amount" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    if (globals.default.parameters.amount as i32) + delta >= 0 {
-                                        globals.default.parameters.amount =
-                                            ((globals.default.parameters.amount as i32) + delta)
-                                                as u32
-                                    }
-                                }
-                            }
-                        }
-                        "main_index" => {
-                            if let Some(tag) = self.tags[self.focused].as_mut() {
-                                if let Ok(value) = value.parse::<u32>() {
-                                    tag.parameters.index = value;
-                                }
-                            }
-                        }
-                        "mod_main_index" => {
-                            if let Some(tag) = self.tags[self.focused].as_mut() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    if (tag.parameters.index as i32) + delta >= 0 {
-                                        tag.parameters.index =
-                                            ((tag.parameters.index as i32) + delta) as u32
-                                    }
-                                }
-                            }
-                        }
-                        "default_main_index" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(value) = value.parse::<u32>() {
-                                    globals.default.parameters.index = value;
-                                }
-                            }
-                        }
-                        "mod_default_main_index" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                if let Ok(delta) = value.parse::<i32>() {
-                                    if (globals.default.parameters.index as i32) + delta >= 0 {
-                                        globals.default.parameters.index =
-                                            ((globals.default.parameters.index as i32) + delta)
-                                                as u32
-                                    }
-                                }
-                            }
-                        }
-                        "xoffset" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                if delta < 0 {
-                                    self.dimension.x = 0;
-                                } else {
-                                    self.dimension.x = delta.abs() as u32;
-                                }
-                                self.dimension.w -= delta.abs() as u32;
-                                self.resize = true;
-                            }
-                        }
-                        "yoffset" => {
-                            if let Ok(delta) = value.parse::<i32>() {
-                                if delta < 0 {
-                                    self.dimension.y = 0;
-                                } else {
-                                    self.dimension.y = delta.abs() as u32;
-                                }
-                                self.dimension.h -= delta.abs() as u32;
-                                self.resize = true;
-                            }
-                        }
-                        "dimension" => {
-                            let mut fields = value.split_whitespace();
-                            self.dimension = {
-                                self.resize = true;
-                                Area {
-                                    x: fields
-                                        .next()
-                                        .unwrap_or_default()
-                                        .parse::<u32>()
-                                        .unwrap_or(self.dimension.x),
-                                    y: fields
-                                        .next()
-                                        .unwrap_or_default()
-                                        .parse::<u32>()
-                                        .unwrap_or(self.dimension.y),
-                                    w: fields
-                                        .next()
-                                        .unwrap_or_default()
-                                        .parse::<u32>()
-                                        .unwrap_or(self.dimension.w),
-                                    h: fields
-                                        .next()
-                                        .unwrap_or_default()
-                                        .parse::<u32>()
-                                        .unwrap_or(self.dimension.h),
-                                }
-                            }
-                        }
-                        "resize" => {
-                            if let Ok(ans) = value.parse::<bool>() {
-                                self.resize = ans;
-                            }
-                        }
-                        "smart_padding" => {
-                            if let Ok(ans) = value.parse::<bool>() {
-                                self.smart_padding = ans;
-                            }
-                        }
-                        "order" => match value {
-                            "ascend" => self.order = Order::Ascend,
-                            "descend" => self.order = Order::Descend,
-                            _ => {}
-                        },
-                        "default" => {
-                            if let Some(globals) = globals.get::<Globals>() {
-                                let (name, layout) = if let Some(data) = value.split_once('\n') {
-                                    data
-                                } else if let Some(data) = lexer::split_ounce(value, ' ') {
-                                    data
-                                } else {
-                                    ("kile", value)
-                                };
-                                globals.default.name = name.to_owned();
-                                globals.default.layout = lexer::parse(layout);
-                            }
-                        }
-                        "clear" => match value {
-                            "all" => self.tags = Default::default(),
-                            "default" => {
-                                if let Some(globals) = globals.get::<Globals>() {
-                                    globals.default.layout = Layout::Full;
-                                }
-                            }
-                            "focused" => self.tags[self.focused] = None,
-                            _ => match value.parse::<usize>() {
-                                Ok(int) => {
-                                    if int > 0 && int < 33 {
-                                        self.tags[int - 1] = None
-                                    }
-                                }
-                                Err(_) => {}
-                            },
-                        },
-                        _ => lexer::main(&mut self, command, value),
+                        _ => {}
                     }
                 }
             }
-        });
-    }
-}
-
-impl Tag {
-    fn update(&self, views: &mut Vec<Area>, view_amount: u32, area: Area) {
-        views.clear();
-        area.generate(views, &self.layout, &self.parameters, view_amount, true);
-    }
-}
-
-fn tag(tagmask: u32, order: &Order) -> u32 {
-    let mut int = 0;
-    let mut current: u32;
-    while {
-        current = 1 << int;
-        current < tagmask
-    } {
-        if tagmask & current == current {
-            if let Order::Descend = order {
-                int = tag(tagmask - current, order);
+            river_layout_v3::Event::UserCommandTags { tags } => {
+                state.tags = tags;
             }
-            break;
         }
-        int += 1;
     }
-    int
+}
+
+impl Dispatch<RiverLayoutManagerV3, ()> for LayoutManager {
+    fn event(
+        _: &mut Self,
+        _: &RiverLayoutManagerV3,
+        _: <RiverLayoutManagerV3 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &wayland_client::Connection,
+        _: &wayland_client::QueueHandle<Self>,
+    ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tag_test() {
+        let iter = TagIter::new(1 | 8);
+
+        let tags = iter.collect::<Vec<_>>();
+
+        assert_eq!(&tags, &[0, 3])
+    }
 }
