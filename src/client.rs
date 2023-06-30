@@ -63,7 +63,10 @@ impl LayoutManager {
     pub fn load_layouts(&mut self) {
         match std::fs::read_to_string(self.path.as_path()) {
             Ok(s) => match kilexpr::parse(&s) {
-                Ok(parser) => self.layouts = parser.vars,
+                Ok(parser) => {
+                    println!("{:#?}", &parser.vars);
+                    self.layouts = parser.vars
+                }
                 Err(err) => eprintln!("{:?}: {:?}", err.kind.cursor(&s), err),
             },
             Err(err) => println!("{:?}", err),
@@ -201,8 +204,8 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
             }
             river_layout_v3::Event::UserCommand { command } => {
                 let output = state.outputs.get_mut(output).unwrap();
-                for (tag, (command, value)) in TagIter::new(state.tags).zip(command.split_once(' '))
-                {
+                let (command, value) = command.split_once(' ').unwrap_or((&command, ""));
+                for tag in TagIter::new(state.tags) {
                     let tag = &mut output.tags[tag];
                     match command {
                         "padding" => tag.padding = value.parse().unwrap_or(tag.padding),
@@ -212,8 +215,7 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                             tag.params.0 = Some(
                                 (tag.params.0.unwrap_or(1) as i32)
                                     .saturating_add(value.parse().ok().unwrap_or_default())
-                                    .clamp(0, i32::MAX)
-                                    as u32,
+                                    .clamp(0, i32::MAX) as u32,
                             );
                         }
                         "main-index" => tag.params.1 = value.parse().ok(),
@@ -221,8 +223,7 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                             tag.params.1 = Some(
                                 (tag.params.1.unwrap_or_default() as i32)
                                     .saturating_add(value.parse().ok().unwrap_or_default())
-                                    .clamp(0, i32::MAX)
-                                    as usize,
+                                    .clamp(0, i32::MAX) as usize,
                             );
                         }
                         "main-ratio" => {
@@ -238,8 +239,10 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                         "layout" => {
                             tag.layout.replace_range(.., value);
                         }
-                        "reload" => return state.load_layouts(),
-
+                        "reload" => {
+                            state.load_layouts();
+                            return;
+                        }
                         "path" => {
                             state.path = value.into();
                             return state.load_layouts();
