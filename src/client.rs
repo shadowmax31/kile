@@ -210,8 +210,9 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                         "main-count" => tag.params.0 = value.parse().ok(),
                         "mod-main-count" => {
                             tag.params.0 = Some(
-                                (tag.params.0.unwrap_or_default() as i32)
+                                (tag.params.0.unwrap_or(1) as i32)
                                     .saturating_add(value.parse().ok().unwrap_or_default())
+                                    .clamp(0, i32::MAX)
                                     as u32,
                             );
                         }
@@ -220,6 +221,7 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                             tag.params.1 = Some(
                                 (tag.params.1.unwrap_or_default() as i32)
                                     .saturating_add(value.parse().ok().unwrap_or_default())
+                                    .clamp(0, i32::MAX)
                                     as usize,
                             );
                         }
@@ -228,7 +230,7 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                         }
                         "mod-main-ratio" => {
                             tag.params.2 = Some(
-                                tag.params.2.unwrap_or_default()
+                                tag.params.2.unwrap_or(0.5)
                                     + value.parse::<f64>().ok().unwrap_or_default(),
                             )
                             .map(|f| f.clamp(0., 1.));
