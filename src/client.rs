@@ -190,12 +190,24 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                     .next();
                 if let Some(tag) = tag {
                     let layout = state.layouts.get(&tag.layout).unwrap_or(&Layout::Full);
-                    LayoutGenerator::new(view_count, rect, layout, &state.layouts)
-                        .parameters(tag.params)
-                        .iter(|rect| {
+                    let gen = LayoutGenerator::new(view_count, rect, layout, &state.layouts)
+                        .parameters(tag.params);
+                    let mut frames = gen.collect::<Vec<_>>();
+                    let main = frames.remove(tag.params.1.unwrap_or_default());
+                    // The main area is generated first and commited.
+                    //
+                    // This guarantees the main is always at the top of the stack.
+                    main.as_generator(&state.layouts).iter(|rect| {
+                        let Rect { x, y, w, h } = rect.pad(tag.padding);
+                        proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
+                    });
+                    // The areas left are slave.
+                    for frame in frames {
+                        frame.as_generator(&state.layouts).iter(|rect| {
                             let Rect { x, y, w, h } = rect.pad(tag.padding);
                             proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
                         });
+                    }
                     proxy.commit(tag.layout.clone(), serial);
                 }
             }
