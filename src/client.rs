@@ -63,10 +63,7 @@ impl LayoutManager {
     pub fn load_layouts(&mut self) {
         match std::fs::read_to_string(self.path.as_path()) {
             Ok(s) => match kilexpr::parse(&s) {
-                Ok(parser) => {
-                    println!("{:#?}", &parser.vars);
-                    self.layouts = parser.vars
-                }
+                Ok(parser) => self.layouts = parser.vars,
                 Err(err) => eprintln!("{:?}: {:?}", err.kind.cursor(&s), err),
             },
             Err(err) => println!("{:?}", err),
@@ -153,7 +150,8 @@ impl Dispatch<WlOutput, ()> for LayoutManager {
         _: &wayland_client::Connection,
         qhandle: &wayland_client::QueueHandle<Self>,
     ) {
-        if let wl_output::Event::Done = event {
+        if let wl_output::Event::Name { name } = event {
+            println!("Bind output: {}", name);
             state
                 .outputs
                 .insert(OutputId::new(output), Output::default());
@@ -193,14 +191,18 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                     let gen = LayoutGenerator::new(view_count, rect, layout, &state.layouts)
                         .parameters(tag.params);
                     let mut frames = gen.collect::<Vec<_>>();
-                    let main = frames.remove(tag.params.1.unwrap_or_default());
-                    // The main area is generated first and commited.
-                    //
-                    // This guarantees the main is always at the top of the stack.
-                    main.as_generator(&state.layouts).iter(|rect| {
-                        let Rect { x, y, w, h } = rect.pad(tag.padding);
-                        proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
-                    });
+                    let main_index = tag.params.1.unwrap_or_default();
+                    // Check if there's a frame at the main_index.
+                    if main_index < frames.len() {
+                        let main = frames.remove(main_index);
+                        // The main area is generated first and commited.
+                        //
+                        // This guarantees the main is always at the top of the stack.
+                        main.as_generator(&state.layouts).iter(|rect| {
+                            let Rect { x, y, w, h } = rect.pad(tag.padding);
+                            proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
+                        });
+                    }
                     // The areas left are slave.
                     for frame in frames {
                         frame.as_generator(&state.layouts).iter(|rect| {
