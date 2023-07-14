@@ -70,7 +70,7 @@ dependencies = [
 [[package]]
 name = "kilexpr"
 version = "0.1.0"
-source = "git+https://gitlab.com/snakedye/kilexpr#a64571f81d20a2a2fb6d2b3870af448634230d6d"
+source = "git+https://gitlab.com/snakedye/kilexpr#f02e10d9885fcadbfaaa3e2237ca756a29eed58f"
 
 [[package]]
 name = "libc"

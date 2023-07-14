@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use kilexpr::{
     parser::{Layout, Parameters},
-    LayoutGenerator, Rect,
+    Frame, LayoutGenerator, Rect,
 };
 use wayland_client::{
     backend::ObjectId,
@@ -190,21 +190,21 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                     let layout = state.layouts.get(&tag.layout).unwrap_or(&Layout::Full);
                     let gen = LayoutGenerator::new(view_count, rect, layout, &state.layouts)
                         .parameters(tag.params);
-                    let mut frames = gen.collect::<Vec<_>>();
-                    let main_index = tag.params.1.unwrap_or_default();
-                    // Check if there's a frame at the main_index.
-                    if main_index < frames.len() {
-                        let main = frames.remove(main_index);
-                        // The main area is generated first and commited.
-                        //
-                        // This guarantees the main is always at the top of the stack.
-                        main.as_generator(&state.layouts).iter(|rect| {
+                    let (_, main_frame) = gen
+                        .clone()
+                        .enumerate()
+                        .find(|(i, frame)| match frame {
+                            Frame::Generator(gen) => gen.is_main(),
+                            Frame::Rect(_) => tag.params.1.map(|n| n == *i).unwrap_or_default(),
+                        })
+                        .unzip();
+                    if let Some(frame) = main_frame {
+                        frame.as_generator(&state.layouts).iter(|rect| {
                             let Rect { x, y, w, h } = rect.pad(tag.padding);
                             proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
                         });
                     }
-                    // The areas left are slave.
-                    for frame in frames {
+                    for frame in gen.filter(|frame| Some(frame) != main_frame.as_ref()) {
                         frame.as_generator(&state.layouts).iter(|rect| {
                             let Rect { x, y, w, h } = rect.pad(tag.padding);
                             proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);

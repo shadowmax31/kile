@@ -118,6 +118,8 @@ do
     riverctl map $mode None XF86MonBrightnessDown spawn 'light -U 5'
 done
 
+riverctl attach-mode bottom
+
 # Set the default layout generator to be kile and start it.
 # River will send the process group of the init executable SIGTERM on exit.
 riverctl default-layout kile
