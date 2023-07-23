@@ -182,11 +182,12 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                 serial,
             } => {
                 state.tags = tags;
-                let rect = Rect::new(0, 0, usable_width, usable_height);
+                let mut rect = Rect::new(0, 0, usable_width, usable_height);
                 let tag = TagIter::new(tags)
                     .filter_map(|tag| state.outputs.get(output).map(|output| &output.tags[tag]))
                     .next();
                 if let Some(tag) = tag {
+                	rect = rect.pad(tag.padding); 
                     let layout = state.layouts.get(&tag.layout).unwrap_or(&Layout::Full);
                     let gen = LayoutGenerator::new(view_count, rect, layout, &state.layouts)
                         .parameters(tag.params);
