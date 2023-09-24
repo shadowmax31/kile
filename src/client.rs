@@ -28,6 +28,8 @@ impl OutputId {
 }
 
 pub struct LayoutManager {
+    /// Default padding for tags
+    default_padding: i32,
     /// Command Tags.
     tags: u32,
     /// Path of the layout file.
@@ -51,6 +53,7 @@ impl Default for LayoutManager {
 impl LayoutManager {
     pub fn new(path: String) -> Self {
         let mut this = Self {
+            default_padding: 0,
             tags: u32::MAX,
             path: PathBuf::from(path),
             layouts: HashMap::new(),
@@ -79,7 +82,7 @@ pub struct Output {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
     layout: String,
-    padding: i32,
+    padding: Option<i32>,
     params: Parameters,
 }
 
@@ -87,7 +90,7 @@ impl Default for Tag {
     fn default() -> Self {
         Tag {
             layout: String::from("default"),
-            padding: 0,
+            padding: None,
             params: Parameters::default(),
         }
     }
@@ -187,7 +190,8 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                     .filter_map(|tag| state.outputs.get(output).map(|output| &output.tags[tag]))
                     .next();
                 if let Some(tag) = tag {
-                	rect = rect.pad(tag.padding); 
+                    let padding = tag.padding.unwrap_or(state.default_padding);
+                    rect = rect.pad(padding);
                     let layout = state.layouts.get(&tag.layout).unwrap_or(&Layout::Full);
                     let gen = LayoutGenerator::new(view_count, rect, layout, &state.layouts)
                         .parameters(tag.params);
@@ -201,13 +205,13 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                         .unzip();
                     if let Some(frame) = main_frame {
                         frame.as_generator(&state.layouts).iter(|rect| {
-                            let Rect { x, y, w, h } = rect.pad(tag.padding);
+                            let Rect { x, y, w, h } = rect.pad(padding);
                             proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
                         });
                     }
                     for frame in gen.filter(|frame| Some(frame) != main_frame.as_ref()) {
                         frame.as_generator(&state.layouts).iter(|rect| {
-                            let Rect { x, y, w, h } = rect.pad(tag.padding);
+                            let Rect { x, y, w, h } = rect.pad(padding);
                             proxy.push_view_dimensions(x as i32, y as i32, w, h, serial);
                         });
                     }
@@ -223,8 +227,16 @@ impl Dispatch<RiverLayoutV3, OutputId> for LayoutManager {
                 for tag in TagIter::new(state.tags) {
                     let tag = &mut output.tags[tag];
                     match command {
-                        "padding" => tag.padding = value.parse().unwrap_or(tag.padding),
-                        "mod-padding" => tag.padding += value.parse::<i32>().unwrap_or_default(),
+                        "default-padding" => state.default_padding = value.parse().unwrap_or(0),
+                        "padding" => {
+                            tag.padding = Some(value.parse().unwrap_or(state.default_padding))
+                        }
+                        "mod-padding" => {
+                            tag.padding = Some(
+                                tag.padding.unwrap_or(state.default_padding)
+                                    + value.parse::<i32>().unwrap_or_default(),
+                            );
+                        }
                         "main-count" => tag.params.0 = value.parse().ok(),
                         "mod-main-count" => {
                             tag.params.0 = Some(
